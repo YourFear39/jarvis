@@ -1,5 +1,9 @@
 """
 Точка входа — запуск Джарвиса.
+
+Режимы запуска:
+  python main.py          — текстовый чат
+  python main.py --voice  — голосовой режим (push-to-talk)
 """
 
 import sys
@@ -39,10 +43,10 @@ def create_llm_provider():
         )
 
 
-def handle_command(command: str, assistant: JarvisAssistant) -> bool:
+def handle_command(command: str, assistant: JarvisAssistant) -> bool | None:
     """
-    Обрабатывает специальные команды (/exit, /clear, /memory).
-    Возвращает True если нужно продолжать, False если выйти.
+    Обрабатывает специальные команды.
+    Возвращает False чтобы выйти, True чтобы продолжить, None если не команда.
     """
     cmd = command.lower().strip()
 
@@ -57,8 +61,11 @@ def handle_command(command: str, assistant: JarvisAssistant) -> bool:
         return True
 
     elif cmd in ("/memory", "/mem", "/remember"):
-        stats = assistant.get_memory_stats()
-        cli.print_info(stats)
+        cli.print_info(assistant.get_memory_stats())
+        return True
+
+    elif cmd in ("/voice", "/голос"):
+        _start_voice_mode(assistant)
         return True
 
     elif cmd in ("/help", "/?", "помощь"):
@@ -66,20 +73,30 @@ def handle_command(command: str, assistant: JarvisAssistant) -> bool:
             "Доступные команды:\n"
             "  /exit     — выйти из Джарвиса\n"
             "  /clear    — очистить экран\n"
-            "  /memory   — показать статистику памяти\n"
+            "  /memory   — статистика памяти\n"
+            "  /voice    — включить голосовой режим\n"
             "  /help     — эта справка\n\n"
             "Просто пиши сообщения на русском или английском!"
         )
         return True
 
-    return None  # Не команда — обрабатывать как обычное сообщение
+    return None
+
+
+def _start_voice_mode(assistant: JarvisAssistant) -> None:
+    """Запускает голосовой режим."""
+    try:
+        from voice.voice_loop import run_voice_mode
+        run_voice_mode(assistant)
+    except ImportError as e:
+        cli.print_error(f"Голосовые пакеты не установлены: {e}")
 
 
 def main():
-    # Инициализация БД
+    voice_mode = "--voice" in sys.argv
+
     init_db()
 
-    # Создаём компоненты
     try:
         llm = create_llm_provider()
     except ValueError as e:
@@ -96,11 +113,20 @@ def main():
         on_tool_use=cli.print_tool_usage,
     )
 
-    # Приветствие
     cli.print_welcome()
-    cli.print_info(f"Провайдер: {config.LLM_PROVIDER.upper()} | Память: {'включена' if memory.is_available else 'отключена'}")
+    mode_label = "ГОЛОС" if voice_mode else "ТЕКСТ"
+    cli.print_info(
+        f"Провайдер: {config.LLM_PROVIDER.upper()} | "
+        f"Память: {'включена' if memory.is_available else 'отключена'} | "
+        f"Режим: {mode_label}"
+    )
 
-    # Главный цикл
+    # Сразу в голосовой режим если передан флаг
+    if voice_mode:
+        _start_voice_mode(assistant)
+        return
+
+    # Текстовый цикл
     while True:
         try:
             user_input = cli.get_user_input()
@@ -111,21 +137,19 @@ def main():
         if not user_input:
             continue
 
-        # Проверяем команды
         result = handle_command(user_input, assistant)
         if result is False:
             break
         elif result is True:
             continue
 
-        # Обычное сообщение — отправляем Джарвису
         try:
             response = assistant.chat(user_input)
             cli.print_jarvis_response(response)
         except KeyboardInterrupt:
             cli.print_info("\nПрервано.")
         except ConnectionError as e:
-            cli.print_error(f"Ошибка сети: {e}")
+            cli.print_error(str(e))
         except Exception as e:
             cli.print_error(f"Неожиданная ошибка: {type(e).__name__}: {e}")
 
