@@ -48,7 +48,7 @@ class GeminiProvider(BaseLLMProvider):
 
         self._key_index = next_index
         self._client = genai.Client(api_key=self._current_key)
-        print(f"\n  [Gemini] Переключаюсь на ключ #{self._key_index + 1} из {len(self._api_keys)}")
+        print(f"\n  [Gemini] switching to key #{self._key_index + 1} of {len(self._api_keys)}")
         return True
 
     def register_tools(self, tools: list[dict]) -> None:
@@ -170,7 +170,7 @@ class GeminiProvider(BaseLLMProvider):
                     if is_unavailable:
                         if attempt < 2:
                             wait = 15 * (attempt + 1)
-                            print(f"\n  [Gemini] Сервер перегружен, жду {wait} сек...")
+                            print(f"\n  [Gemini] 503, retrying in {wait}s...")
                             time.sleep(wait)
                             continue
                         raise ConnectionError(
@@ -184,18 +184,16 @@ class GeminiProvider(BaseLLMProvider):
                         wait = int(match.group(1)) + 2 if match else 0
 
                         if has_retry_delay and wait <= 120 and attempt == 0:
-                            # Per-minute лимит — просто подождать
-                            print(f"\n  [Gemini] Лимит в минуту. Жду {wait} сек...")
+                            print(f"\n  [Gemini] rate limit, waiting {wait}s...")
                             time.sleep(wait)
                             continue
 
                         # Дневной лимит этого ключа исчерпан — пробуем следующий
                         if self._switch_key():
-                            cfg_new = types.GenerateContentConfig(
+                            cfg = types.GenerateContentConfig(
                                 system_instruction=system_prompt,
                                 tools=self._gemini_tools if self._gemini_tools else None,
                             )
-                            cfg = cfg_new
                             break  # Выходим из внутреннего цикла → внешний попробует новый ключ
 
                         # Все ключи исчерпаны
