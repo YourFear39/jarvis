@@ -167,10 +167,14 @@ class GeminiProvider(BaseLLMProvider):
                     is_quota = "429" in err or "resource_exhausted" in err.lower()
                     is_unavailable = "503" in err or "unavailable" in err.lower()
 
-                    if is_unavailable and attempt == 0:
-                        # Сервер временно недоступен — одна попытка подождать
-                        time.sleep(15)
-                        continue
+                    if is_unavailable:
+                        if attempt == 0:
+                            print(f"\n  [Gemini] Сервер перегружен, жду 20 сек...")
+                            time.sleep(20)
+                            continue
+                        raise ConnectionError(
+                            "Серверы Gemini сейчас перегружены спросом. Попробуй ещё раз."
+                        ) from e
 
                     if is_quota:
                         # Проверяем: это per-minute лимит (есть retryDelay) или дневной (limit: 0)?
