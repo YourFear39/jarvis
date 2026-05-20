@@ -125,7 +125,16 @@ class GeminiProvider(BaseLLMProvider):
             )],
         ))
 
-        response = self._generate(system_prompt, contents)
+        try:
+            response = self._generate(system_prompt, contents)
+        except Exception as e:
+            err = str(e)
+            if "503" in err or "unavailable" in err.lower() or "429" in err or "resource_exhausted" in err.lower():
+                raise ConnectionError(
+                    "Серверы Gemini перегружены или исчерпан дневной лимит запросов. "
+                    "Попробуй через несколько секунд."
+                ) from e
+            raise
         return self._parse_response(response)
 
     def _generate(self, system_prompt: str, contents: list):

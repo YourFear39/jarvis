@@ -23,8 +23,8 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")  # "gemini" | "claude" | "oll
 
 # --- Настройки Gemini ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = "gemini-2.5-flash"        # Актуальная модель с function calling
-GEMINI_MODEL_FALLBACK = "gemini-1.5-flash"  # Запасной вариант
+GEMINI_MODEL = "gemini-1.5-flash"          # 1500 запросов/день бесплатно
+GEMINI_MODEL_FALLBACK = "gemini-1.5-flash-8b"  # Запасной (ещё выше лимит)
 
 # --- Настройки Claude ---
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
