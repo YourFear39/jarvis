@@ -10,7 +10,7 @@ from rich.text import Text
 from rich.prompt import Prompt
 from rich import box
 
-console = Console(encoding="utf-8")
+console = Console()
 
 
 def print_welcome():
