@@ -33,6 +33,20 @@ TOOL_HANDLERS = {
     "update_plan_step": lambda args: update_plan_step(**args),
 }
 
+# Сообщения-заглушки когда LLM недоступен, но инструмент уже отработал
+_TOOL_FALLBACK_INTRO = {
+    "web_search": "Нашёл в интернете (LLM временно недоступен для обработки):\n\n",
+    "add_note": "",
+    "get_notes": "",
+    "add_task": "",
+    "get_tasks": "",
+    "complete_task": "",
+    "read_file": "Содержимое файла (LLM временно недоступен):\n\n",
+    "create_plan": "",
+    "get_plan": "",
+    "update_plan_step": "",
+}
+
 
 class JarvisAssistant:
     """
@@ -57,9 +71,9 @@ class JarvisAssistant:
         1. Подгружаем релевантные воспоминания
         2. Отправляем в LLM
         3. Если LLM хочет инструмент — вызываем его и отправляем результат обратно
-        4. Получаем финальный ответ, сохраняем в память
+        4. Если второй вызов LLM упал — показываем сырые результаты инструмента
+        5. Получаем финальный ответ, сохраняем в память
         """
-        # Подгружаем релевантные воспоминания
         memories = self._memory.get_relevant_memories(user_message)
         system_prompt = get_system_prompt(memories if memories else None)
 
@@ -72,33 +86,40 @@ class JarvisAssistant:
 
         # Если LLM хочет вызвать инструмент
         if response.tool_calls:
-            tool_call = response.tool_calls[0]  # Обрабатываем первый вызов
+            tool_call = response.tool_calls[0]
 
-            # Показываем пользователю какой инструмент используется
             if self._on_tool_use:
                 self._on_tool_use(tool_call.name)
 
             tool_result = self._execute_tool(tool_call)
 
             # Отправляем результат инструмента обратно в LLM
-            response = self._llm.chat_with_tool_result(
-                system_prompt=system_prompt,
-                history=self._history[-config.SESSION_HISTORY_LIMIT:],
-                user_message=user_message,
-                tool_call=tool_call,
-                tool_result=tool_result,
-            )
+            # Если LLM временно недоступен — показываем результат напрямую
+            try:
+                response = self._llm.chat_with_tool_result(
+                    system_prompt=system_prompt,
+                    history=self._history[-config.SESSION_HISTORY_LIMIT:],
+                    user_message=user_message,
+                    tool_call=tool_call,
+                    tool_result=tool_result,
+                )
+            except ConnectionError:
+                # LLM упал на втором запросе, но инструмент уже дал результат
+                # Возвращаем сырые данные — лучше чем ничего
+                intro = _TOOL_FALLBACK_INTRO.get(tool_call.name, "")
+                final_text = intro + tool_result
+                self._save_to_history(user_message, final_text)
+                return final_text
 
         final_text = response.text or "(Нет ответа)"
-
-        # Сохраняем в историю сессии
-        self._history.append(Message(role="user", content=user_message))
-        self._history.append(Message(role="assistant", content=final_text))
-
-        # Сохраняем в долговременную память
-        self._memory.save_exchange(user_message, final_text)
-
+        self._save_to_history(user_message, final_text)
         return final_text
+
+    def _save_to_history(self, user_message: str, response_text: str) -> None:
+        """Сохраняет обмен в историю сессии и долговременную память."""
+        self._history.append(Message(role="user", content=user_message))
+        self._history.append(Message(role="assistant", content=response_text))
+        self._memory.save_exchange(user_message, response_text)
 
     def _execute_tool(self, tool_call: ToolCall) -> str:
         """Выполняет вызов инструмента и возвращает результат."""

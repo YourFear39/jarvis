@@ -155,7 +155,7 @@ class GeminiProvider(BaseLLMProvider):
         # Внешний цикл: перебор ключей
         while True:
             # Внутренний цикл: retry при временных ошибках (503, краткий 429)
-            for attempt in range(2):
+            for attempt in range(3):
                 try:
                     return self._client.models.generate_content(
                         model=self._model_name,
@@ -168,12 +168,13 @@ class GeminiProvider(BaseLLMProvider):
                     is_unavailable = "503" in err or "unavailable" in err.lower()
 
                     if is_unavailable:
-                        if attempt == 0:
-                            print(f"\n  [Gemini] Сервер перегружен, жду 20 сек...")
-                            time.sleep(20)
+                        if attempt < 2:
+                            wait = 15 * (attempt + 1)
+                            print(f"\n  [Gemini] Сервер перегружен, жду {wait} сек...")
+                            time.sleep(wait)
                             continue
                         raise ConnectionError(
-                            "Серверы Gemini сейчас перегружены спросом. Попробуй ещё раз."
+                            "Серверы Gemini перегружены. Попробуй через минуту."
                         ) from e
 
                     if is_quota:
