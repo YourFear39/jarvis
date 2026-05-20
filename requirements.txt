@@ -1,0 +1,23 @@
+# LLM провайдеры
+google-genai>=1.0.0
+anthropic>=0.40.0
+
+# Веб-поиск (бесплатно, без API-ключа)
+duckduckgo-search>=6.0.0
+
+# Векторная память
+chromadb>=0.5.0
+sentence-transformers>=3.0.0
+
+# Интерфейс
+rich>=13.0.0
+
+# Конфиг
+python-dotenv>=1.0.0
+
+# Чтение файлов
+PyPDF2>=3.0.0
+python-docx>=1.0.0
+
+# Ollama (опционально, для локальных моделей)
+requests>=2.31.0
