@@ -3,6 +3,9 @@
 Использует актуальный пакет google-genai (не устаревший google-generativeai).
 """
 
+import re
+import time
+
 from google import genai
 from google.genai import types
 
@@ -77,20 +80,16 @@ class GeminiProvider(BaseLLMProvider):
 
         try:
             response = self._generate(system_prompt, contents)
-            return self._parse_response(response)
+        except ConnectionError:
+            raise
         except Exception as e:
-            err = str(e)
             # Модель не найдена → пробуем запасную
-            if "not found" in err.lower() or "404" in err:
+            if "not found" in str(e).lower() or "404" in str(e):
                 self._model_name = config.GEMINI_MODEL_FALLBACK
                 response = self._generate(system_prompt, contents)
-                return self._parse_response(response)
-            # Временная перегрузка сервера
-            if "503" in err or "unavailable" in err.lower() or "429" in err:
-                raise ConnectionError(
-                    "Серверы Gemini сейчас перегружены. Попробуй ещё раз через несколько секунд."
-                ) from e
-            raise
+            else:
+                raise
+        return self._parse_response(response)
 
     def chat_with_tool_result(
         self,
@@ -125,30 +124,52 @@ class GeminiProvider(BaseLLMProvider):
             )],
         ))
 
-        try:
-            response = self._generate(system_prompt, contents)
-        except Exception as e:
-            err = str(e)
-            if "503" in err or "unavailable" in err.lower() or "429" in err or "resource_exhausted" in err.lower():
-                raise ConnectionError(
-                    "Серверы Gemini перегружены или исчерпан дневной лимит запросов. "
-                    "Попробуй через несколько секунд."
-                ) from e
-            raise
+        response = self._generate(system_prompt, contents)
         return self._parse_response(response)
 
     def _generate(self, system_prompt: str, contents: list):
-        """Отправляет запрос к Gemini API."""
-        config_kwargs = types.GenerateContentConfig(
+        """
+        Отправляет запрос к Gemini API.
+        При ошибке 429 (rate limit) ждёт нужное время и повторяет автоматически.
+        """
+        cfg = types.GenerateContentConfig(
             system_instruction=system_prompt,
             tools=self._gemini_tools if self._gemini_tools else None,
         )
 
-        return self._client.models.generate_content(
-            model=self._model_name,
-            contents=contents,
-            config=config_kwargs,
-        )
+        for attempt in range(3):
+            try:
+                return self._client.models.generate_content(
+                    model=self._model_name,
+                    contents=contents,
+                    config=cfg,
+                )
+            except Exception as e:
+                err = str(e)
+                is_rate_limit = "429" in err or "resource_exhausted" in err.lower()
+                is_unavailable = "503" in err or "unavailable" in err.lower()
+
+                if (is_rate_limit or is_unavailable) and attempt < 2:
+                    # Пробуем вытащить время ожидания из сообщения об ошибке
+                    match = re.search(r'retry[^\d]*(\d+)', err, re.IGNORECASE)
+                    wait = int(match.group(1)) + 2 if match else 30
+                    print(f"\n  [Gemini] Квота. Жду {wait} сек и повторяю...")
+                    time.sleep(wait)
+                    continue
+
+                # Дневной лимит исчерпан — нет смысла повторять
+                if is_rate_limit:
+                    raise ConnectionError(
+                        "Исчерпан дневной лимит запросов Gemini (бесплатный тариф). "
+                        "Лимит обновляется каждый день в ~03:00 по Москве."
+                    ) from e
+
+                if is_unavailable:
+                    raise ConnectionError(
+                        "Серверы Gemini временно недоступны. Попробуй через минуту."
+                    ) from e
+
+                raise
 
     def _build_contents(self, history: list[Message], user_message: str) -> list:
         """Конвертирует историю и новое сообщение в формат Gemini."""
