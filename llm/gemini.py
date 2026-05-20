@@ -1,6 +1,7 @@
 """
 Провайдер Google Gemini.
 Использует актуальный пакет google-genai (не устаревший google-generativeai).
+Поддерживает несколько API-ключей: при исчерпании квоты переключается на следующий.
 """
 
 import re
@@ -14,19 +15,41 @@ from llm.base import BaseLLMProvider, LLMResponse, Message, ToolCall
 
 
 class GeminiProvider(BaseLLMProvider):
-    """Провайдер Google Gemini с поддержкой function calling."""
+    """Провайдер Google Gemini с поддержкой function calling и ротации ключей."""
 
     def __init__(self):
         super().__init__()
 
-        if not config.GEMINI_API_KEY:
+        if not config.GEMINI_API_KEYS:
             raise ValueError(
-                "GEMINI_API_KEY не задан. Добавь ключ в файл .env"
+                "GEMINI_API_KEYS не задан. Добавь ключ(и) в файл .env"
             )
 
-        self._client = genai.Client(api_key=config.GEMINI_API_KEY)
+        # Список всех ключей и текущий индекс
+        self._api_keys = config.GEMINI_API_KEYS
+        self._key_index = 0
+        self._client = genai.Client(api_key=self._current_key)
+
         self._model_name = config.GEMINI_MODEL
         self._gemini_tools: list = []
+
+    @property
+    def _current_key(self) -> str:
+        return self._api_keys[self._key_index]
+
+    def _switch_key(self) -> bool:
+        """
+        Переключается на следующий ключ.
+        Возвращает True если переключение удалось, False если ключи кончились.
+        """
+        next_index = self._key_index + 1
+        if next_index >= len(self._api_keys):
+            return False
+
+        self._key_index = next_index
+        self._client = genai.Client(api_key=self._current_key)
+        print(f"\n  [Gemini] Переключаюсь на ключ #{self._key_index + 1} из {len(self._api_keys)}")
+        return True
 
     def register_tools(self, tools: list[dict]) -> None:
         """Конвертирует универсальные инструменты в формат Gemini."""
@@ -35,23 +58,16 @@ class GeminiProvider(BaseLLMProvider):
         for tool in tools:
             params = tool["parameters"]
 
-            # Конвертируем JSON Schema properties в формат Gemini
             gemini_props = {}
             for param_name, param_info in params.get("properties", {}).items():
                 type_str = param_info.get("type", "string").upper()
-                # Маппинг типов JSON Schema → Gemini
                 type_map = {
-                    "STRING": "STRING",
-                    "INTEGER": "INTEGER",
-                    "NUMBER": "NUMBER",
-                    "BOOLEAN": "BOOLEAN",
-                    "ARRAY": "ARRAY",
-                    "OBJECT": "OBJECT",
+                    "STRING": "STRING", "INTEGER": "INTEGER",
+                    "NUMBER": "NUMBER", "BOOLEAN": "BOOLEAN",
+                    "ARRAY": "ARRAY", "OBJECT": "OBJECT",
                 }
-                gemini_type = type_map.get(type_str, "STRING")
-
                 gemini_props[param_name] = types.Schema(
-                    type=gemini_type,
+                    type=type_map.get(type_str, "STRING"),
                     description=param_info.get("description", ""),
                 )
 
@@ -102,7 +118,6 @@ class GeminiProvider(BaseLLMProvider):
         """Отправляет результат инструмента и получает финальный ответ."""
         contents = self._build_contents(history, user_message)
 
-        # Ответ модели с function call
         contents.append(types.Content(
             role="model",
             parts=[types.Part(
@@ -113,7 +128,6 @@ class GeminiProvider(BaseLLMProvider):
             )],
         ))
 
-        # Результат выполнения инструмента
         contents.append(types.Content(
             role="user",
             parts=[types.Part(
@@ -130,63 +144,78 @@ class GeminiProvider(BaseLLMProvider):
     def _generate(self, system_prompt: str, contents: list):
         """
         Отправляет запрос к Gemini API.
-        При ошибке 429 (rate limit) ждёт нужное время и повторяет автоматически.
+        При исчерпании квоты на текущем ключе — переключается на следующий.
+        При временной перегрузке — ждёт и повторяет.
         """
         cfg = types.GenerateContentConfig(
             system_instruction=system_prompt,
             tools=self._gemini_tools if self._gemini_tools else None,
         )
 
-        for attempt in range(3):
-            try:
-                return self._client.models.generate_content(
-                    model=self._model_name,
-                    contents=contents,
-                    config=cfg,
-                )
-            except Exception as e:
-                err = str(e)
-                is_rate_limit = "429" in err or "resource_exhausted" in err.lower()
-                is_unavailable = "503" in err or "unavailable" in err.lower()
+        # Внешний цикл: перебор ключей
+        while True:
+            # Внутренний цикл: retry при временных ошибках (503, краткий 429)
+            for attempt in range(2):
+                try:
+                    return self._client.models.generate_content(
+                        model=self._model_name,
+                        contents=contents,
+                        config=cfg,
+                    )
+                except Exception as e:
+                    err = str(e)
+                    is_quota = "429" in err or "resource_exhausted" in err.lower()
+                    is_unavailable = "503" in err or "unavailable" in err.lower()
 
-                if (is_rate_limit or is_unavailable) and attempt < 2:
-                    # Пробуем вытащить время ожидания из сообщения об ошибке
-                    match = re.search(r'retry[^\d]*(\d+)', err, re.IGNORECASE)
-                    wait = int(match.group(1)) + 2 if match else 30
-                    print(f"\n  [Gemini] Квота. Жду {wait} сек и повторяю...")
-                    time.sleep(wait)
-                    continue
+                    if is_unavailable and attempt == 0:
+                        # Сервер временно недоступен — одна попытка подождать
+                        time.sleep(15)
+                        continue
 
-                # Дневной лимит исчерпан — нет смысла повторять
-                if is_rate_limit:
-                    raise ConnectionError(
-                        "Исчерпан дневной лимит запросов Gemini (бесплатный тариф). "
-                        "Лимит обновляется каждый день в ~03:00 по Москве."
-                    ) from e
+                    if is_quota:
+                        # Проверяем: это per-minute лимит (есть retryDelay) или дневной (limit: 0)?
+                        has_retry_delay = bool(re.search(r'"retryDelay"', err))
+                        match = re.search(r'retry[^\d]*(\d+)', err, re.IGNORECASE)
+                        wait = int(match.group(1)) + 2 if match else 0
 
-                if is_unavailable:
-                    raise ConnectionError(
-                        "Серверы Gemini временно недоступны. Попробуй через минуту."
-                    ) from e
+                        if has_retry_delay and wait <= 120 and attempt == 0:
+                            # Per-minute лимит — просто подождать
+                            print(f"\n  [Gemini] Лимит в минуту. Жду {wait} сек...")
+                            time.sleep(wait)
+                            continue
 
-                raise
+                        # Дневной лимит этого ключа исчерпан — пробуем следующий
+                        if self._switch_key():
+                            cfg_new = types.GenerateContentConfig(
+                                system_instruction=system_prompt,
+                                tools=self._gemini_tools if self._gemini_tools else None,
+                            )
+                            cfg = cfg_new
+                            break  # Выходим из внутреннего цикла → внешний попробует новый ключ
+
+                        # Все ключи исчерпаны
+                        raise ConnectionError(
+                            f"Все {len(self._api_keys)} ключа(-ей) Gemini исчерпали дневной лимит. "
+                            "Лимит обновляется каждый день в ~03:00 по Москве."
+                        ) from e
+
+                    raise  # Любая другая ошибка — пробрасываем
+            else:
+                continue  # Внутренний цикл завершился нормально → выходим из while
 
     def _build_contents(self, history: list[Message], user_message: str) -> list:
         """Конвертирует историю и новое сообщение в формат Gemini."""
         contents = []
-
         for msg in history:
             role = "user" if msg.role == "user" else "model"
             contents.append(types.Content(
                 role=role,
                 parts=[types.Part(text=msg.content)],
             ))
-
         contents.append(types.Content(
             role="user",
             parts=[types.Part(text=user_message)],
         ))
-
         return contents
 
     def _parse_response(self, response) -> LLMResponse:

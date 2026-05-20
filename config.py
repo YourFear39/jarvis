@@ -22,7 +22,9 @@ DATA_DIR.mkdir(exist_ok=True)
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")  # "gemini" | "claude" | "ollama"
 
 # --- Настройки Gemini ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# Несколько ключей через запятую — при исчерпании квоты переключается на следующий
+_raw_keys = os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", ""))
+GEMINI_API_KEYS: list[str] = [k.strip() for k in _raw_keys.split(",") if k.strip()]
 GEMINI_MODEL = "models/gemini-2.5-flash"           # Основная модель
 GEMINI_MODEL_FALLBACK = "models/gemini-2.0-flash"  # Запасная при 404
 
