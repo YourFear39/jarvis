@@ -1,11 +1,12 @@
 """
 Инструмент веб-поиска через DuckDuckGo (бесплатно, без API-ключа).
+Используется пакет ddgs (переименованный duckduckgo-search).
 """
 
 import config
 
 try:
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS
     DDGS_AVAILABLE = True
 except ImportError:
     DDGS_AVAILABLE = False
@@ -19,19 +20,18 @@ def web_search(query: str) -> str:
     :return: строка с результатами для передачи в LLM
     """
     if not DDGS_AVAILABLE:
-        return "Ошибка: библиотека duckduckgo-search не установлена. Запусти: pip install duckduckgo-search"
+        return "Ошибка: библиотека ddgs не установлена. Запусти: pip install ddgs"
 
     try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(
-                query,
-                max_results=config.SEARCH_MAX_RESULTS,
-            ))
+        results = list(DDGS().text(
+            query,
+            max_results=config.SEARCH_MAX_RESULTS,
+        ))
 
         if not results:
-            return f"По запросу '{query}' ничего не найдено."
+            return f"По запросу '{query}' ничего не найдено в интернете."
 
-        # Форматируем результаты в читаемый текст
+        # Форматируем результаты в читаемый текст для LLM
         lines = [f"Результаты поиска по запросу: {query}\n"]
         for i, r in enumerate(results, 1):
             lines.append(f"{i}. {r.get('title', 'Без названия')}")
