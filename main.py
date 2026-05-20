@@ -92,6 +92,39 @@ def _start_voice_mode(assistant: JarvisAssistant) -> None:
         cli.print_error(f"Голосовые пакеты не установлены: {e}")
 
 
+def _handle_connection_error(error: ConnectionError, user_input: str) -> None:
+    """
+    Обрабатывает ошибки подключения к LLM.
+    Пытается ответить офлайн, иначе показывает понятное сообщение.
+    """
+    from core.offline import handle_offline, offline_help
+
+    err = str(error)
+
+    # Сначала пробуем ответить без LLM
+    offline_response = handle_offline(user_input)
+    if offline_response:
+        cli.print_jarvis_response(offline_response)
+        cli.print_info("[Ответ без LLM]")
+        return
+
+    # Не смогли обработать офлайн — показываем что доступно
+    if "GEMINI_QUOTA_EXHAUSTED" in err:
+        n = err.split(":")[-1]
+        cli.print_error(
+            f"Все {n} ключа Gemini исчерпали дневной лимит запросов.\n"
+            "Лимит обновляется каждый день в ~03:00 по Москве."
+        )
+    elif "GEMINI_UNAVAILABLE" in err:
+        cli.print_error("Серверы Gemini перегружены. Попробуй через минуту.")
+    else:
+        cli.print_error(f"Нет связи с LLM: {err}")
+
+    # Показываем что можно делать офлайн
+    from core.offline import offline_help
+    cli.print_info(offline_help())
+
+
 def main():
     voice_mode = "--voice" in sys.argv
 
@@ -149,7 +182,7 @@ def main():
         except KeyboardInterrupt:
             cli.print_info("\nПрервано.")
         except ConnectionError as e:
-            cli.print_error(str(e))
+            _handle_connection_error(e, user_input)
         except Exception as e:
             cli.print_error(f"Неожиданная ошибка: {type(e).__name__}: {e}")
 

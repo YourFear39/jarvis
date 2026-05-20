@@ -173,9 +173,7 @@ class GeminiProvider(BaseLLMProvider):
                             print(f"\n  [Gemini] 503, retrying in {wait}s...")
                             time.sleep(wait)
                             continue
-                        raise ConnectionError(
-                            "Серверы Gemini перегружены. Попробуй через минуту."
-                        ) from e
+                        raise ConnectionError("GEMINI_UNAVAILABLE") from e
 
                     if is_quota:
                         # Проверяем: это per-minute лимит (есть retryDelay) или дневной (limit: 0)?
@@ -198,8 +196,7 @@ class GeminiProvider(BaseLLMProvider):
 
                         # Все ключи исчерпаны
                         raise ConnectionError(
-                            f"Все {len(self._api_keys)} ключа(-ей) Gemini исчерпали дневной лимит. "
-                            "Лимит обновляется каждый день в ~03:00 по Москве."
+                            f"GEMINI_QUOTA_EXHAUSTED:{len(self._api_keys)}"
                         ) from e
 
                     raise  # Любая другая ошибка — пробрасываем
