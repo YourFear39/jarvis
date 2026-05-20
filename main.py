@@ -3,6 +3,14 @@
 """
 
 import sys
+import io
+
+# Принудительно UTF-8 для терминала Windows — иначе кириллица вызывает UnicodeEncodeError
+if hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'buffer'):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 import config
 
 from tools.notes import init_db
