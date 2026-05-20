@@ -24,7 +24,11 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")  # "gemini" | "claude" | "oll
 # --- Настройки Gemini ---
 # Несколько ключей через запятую — при исчерпании квоты переключается на следующий
 _raw_keys = os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", ""))
-GEMINI_API_KEYS: list[str] = [k.strip() for k in _raw_keys.split(",") if k.strip()]
+# Оставляем только настоящие ключи: ASCII-only, начинаются с "AIza", длина 39 символов
+GEMINI_API_KEYS: list[str] = [
+    k.strip() for k in _raw_keys.split(",")
+    if k.strip() and k.strip().startswith("AIza") and k.strip().isascii()
+]
 GEMINI_MODEL = "models/gemini-2.0-flash"            # Стабильная, менее перегруженная
 GEMINI_MODEL_FALLBACK = "models/gemini-2.0-flash-lite"  # Запасная при 404
 
