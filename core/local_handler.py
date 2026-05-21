@@ -85,10 +85,23 @@ APPS: dict[str, str] = {
     "ножницы":           "snippingtool",
 }
 
+# Слова-вежливости перед командой ("пожалуйста открой", "можешь запустить")
+_POLITE = r'(?:(?:пожалуйста|please|можешь|можно|could you|can you)\s+)?'
+
 # Триггерные глаголы для каждого вида действий
-_RE_OPEN   = re.compile(r'^(открой|открыть|запусти|запустить|launch|start|open|run)\s+', re.I)
-_RE_CREATE = re.compile(r'^(создай|создать|create|сделай|сделать|new)\s+', re.I)
-_RE_DELETE = re.compile(r'^(удали|удалить|delete|remove|убери|убрать|стёрти|стереть)\s+', re.I)
+_RE_OPEN   = re.compile(
+    _POLITE + r'(открой|открыть|запусти|запустить|launch|start|open|run)\s+', re.I
+)
+_RE_CREATE = re.compile(_POLITE + r'(создай|создать|create|сделай|сделать|new)\s+', re.I)
+_RE_DELETE = re.compile(
+    _POLITE + r'(удали|удалить|delete|remove|убери|убрать|стёрти|стереть)\s+', re.I
+)
+
+# Поиск глагола внутри фразы — для "стим открой", "можешь открыть стим?"
+_RE_OPEN_INNER = re.compile(
+    r'\b(открой|открыть|запусти|запустить|launch|start|open|run)\s+(\S[\s\S]*?)[\?\.\!]?\s*$',
+    re.I,
+)
 
 # Слова-указатели типа объекта
 _RE_FILE_KW   = re.compile(r'^(файл|file)\s+', re.I)
@@ -165,39 +178,21 @@ def handle_local(message: str) -> str | None:
 
     # --- Открыть / запустить ---
     if _RE_OPEN.match(low):
-        rest_low = _RE_OPEN.sub("", low).strip().rstrip(". ")
-        rest_orig = _RE_OPEN.sub("", msg).strip().rstrip(". ")
+        rest_low = _clean_rest(_RE_OPEN.sub("", low, count=1))
+        rest_orig = _clean_rest(_RE_OPEN.sub("", msg, count=1))
+        result = _try_open(rest_low, rest_orig)
+        if result is not None:
+            return result
 
-        # Явно указан тип: "открой файл X"
-        if _RE_FILE_KW.match(rest_low):
-            path = _RE_FILE_KW.sub("", rest_orig).strip().strip("'\"")
-            return _open_file(path)
-
-        # Явно указан тип: "открой сайт X"
-        if _RE_SITE_KW.match(rest_low) or _looks_like_url(rest_low):
-            url = _extract_url(rest_orig) or rest_orig
-            return _open_url(url)
-
-        # Известное встроенное приложение?
-        app_cmd = _match_app(rest_low)
-        if app_cmd:
-            return _launch_app(app_cmd, rest_low)
-
-        # Пользовательское приложение из базы?
-        custom_path = _get_custom_app(rest_low)
-        if custom_path:
-            return _launch_app(custom_path, rest_low)
-
-        # Выглядит как путь к файлу?
-        if _looks_like_path(rest_orig):
-            return _open_file(rest_orig)
-
-        # Приложение не найдено — спрашиваем путь
-        _pending_app = rest_low
-        return (
-            f"Не нашёл приложение «{rest_low}», сэр.\n"
-            f"Укажи путь к exe-файлу — запомню и открою."
-        )
+    # --- Fallback: глагол НЕ в начале ("стим открой", "можешь открыть стим?") ---
+    m_inner = _RE_OPEN_INNER.search(low)
+    if m_inner:
+        rest_low = _clean_rest(m_inner.group(2))
+        m_orig = _RE_OPEN_INNER.search(msg)
+        rest_orig = _clean_rest(m_orig.group(2) if m_orig else rest_low)
+        result = _try_open(rest_low, rest_orig)
+        if result is not None:
+            return result
 
     # --- Создать ---
     if _RE_CREATE.match(low):
@@ -235,6 +230,45 @@ def handle_local(message: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Запуск приложений
 # ---------------------------------------------------------------------------
+
+def _try_open(rest_low: str, rest_orig: str) -> str | None:
+    """
+    Пробует открыть цель (приложение / файл / сайт) по очищенному фрагменту.
+    Возвращает ответ-строку или None если цель не распознана.
+    """
+    global _pending_app
+
+    # Явно указан тип: "открой файл X"
+    if _RE_FILE_KW.match(rest_low):
+        path = _RE_FILE_KW.sub("", rest_orig, count=1).strip().strip("'\"")
+        return _open_file(path)
+
+    # Явно указан тип: "открой сайт X"
+    if _RE_SITE_KW.match(rest_low) or _looks_like_url(rest_low):
+        url = _extract_url(rest_orig) or rest_orig
+        return _open_url(url)
+
+    # Известное встроенное приложение?
+    app_cmd = _match_app(rest_low)
+    if app_cmd:
+        return _launch_app(app_cmd, rest_low)
+
+    # Пользовательское приложение из базы?
+    custom_path = _get_custom_app(rest_low)
+    if custom_path:
+        return _launch_app(custom_path, rest_low)
+
+    # Выглядит как путь к файлу?
+    if _looks_like_path(rest_orig):
+        return _open_file(rest_orig)
+
+    # Приложение не найдено — спрашиваем путь
+    _pending_app = rest_low
+    return (
+        f"Не нашёл приложение «{rest_low}», сэр.\n"
+        f"Укажи путь к exe-файлу — запомню и открою."
+    )
+
 
 def _match_app(name: str) -> str | None:
     """Ищет команду запуска по имени (точное + частичное совпадение)."""
@@ -521,6 +555,13 @@ def _register_and_launch(name: str, path: str) -> str:
 # ---------------------------------------------------------------------------
 # Утилиты
 # ---------------------------------------------------------------------------
+
+def _clean_rest(text: str) -> str:
+    """Убирает пунктуацию и хвостовые вежливые слова из хвоста команды."""
+    text = text.strip().rstrip("?!., ")
+    text = re.sub(r'\s+(?:пожалуйста|please|thanks|спасибо)$', '', text, flags=re.I)
+    return text.strip()
+
 
 def _any(text: str, keywords: list[str]) -> bool:
     return any(kw in text for kw in keywords)

@@ -320,10 +320,20 @@ class JarvisApp(ctk.CTk):
     # ------------------------------------------------------------------ connection errors
 
     def _handle_conn_error(self, err: str, user_text: str):
-        """Обрабатывает ошибку подключения к LLM — сначала пробует офлайн-режим."""
+        """Обрабатывает ошибку подключения к LLM — сначала пробует локальный обработчик."""
+        from core.local_handler import handle_local
         from core.offline import handle_offline, offline_help
 
-        # Пробуем ответить без LLM
+        # Пробуем локальный обработчик (открыть приложение, файл и т.д.)
+        local_response = handle_local(user_text)
+        if local_response is not None:
+            self._append_message("jarvis", local_response)
+            self._set_busy(False)
+            if self._voice_mode:
+                self._enqueue_tts(local_response)
+            return
+
+        # Пробуем офлайн-режим (время, заметки, задачи)
         offline_response = handle_offline(user_text)
         if offline_response:
             self._append_message("jarvis", offline_response)
