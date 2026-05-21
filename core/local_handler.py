@@ -94,6 +94,18 @@ _RE_DELETE = re.compile(r'^(удали|удалить|delete|remove|убери|�
 _RE_FILE_KW   = re.compile(r'^(файл|file)\s+', re.I)
 _RE_FOLDER_KW = re.compile(r'^(папку?|folder|директорию|directory)\s+', re.I)
 _RE_SITE_KW   = re.compile(r'^(сайт|site|url|ссылку?)\s+', re.I)
+_RE_ADD_APP   = re.compile(
+    r'^(?:добавь|add|зарегистрируй|запомни)\s+(?:приложение|app)\s+(\S+)\s+(.+)$', re.I
+)
+_RE_DEL_APP   = re.compile(
+    r'^(?:удали|забудь|remove|delete)\s+(?:приложение|app)\s+(\S+)$', re.I
+)
+
+# ---------------------------------------------------------------------------
+# Состояние — ожидание пути для неизвестного приложения
+# (сбрасывается после первого же следующего сообщения)
+# ---------------------------------------------------------------------------
+_pending_app: str | None = None   # имя приложения, путь к которому мы ждём
 
 
 def handle_local(message: str) -> str | None:
@@ -101,8 +113,38 @@ def handle_local(message: str) -> str | None:
     Пытается выполнить команду локально.
     Возвращает ответ-строку если справился, None если нужен LLM.
     """
+    global _pending_app
+
     msg = message.strip()
     low = msg.lower()
+
+    # --- Ожидаем путь к приложению (следствие предыдущего "не нашёл") ---
+    if _pending_app is not None:
+        name = _pending_app
+        _pending_app = None                     # сбрасываем в любом случае
+
+        path = msg.strip("'\"")
+        if _looks_like_path(path) or path.lower().endswith(".exe"):
+            return _register_and_launch(name, path)
+        # Пользователь сказал что-то другое — продолжаем обычную обработку
+
+    # --- Явно добавить приложение: "добавь приложение rust C:\path\to\rustdesk.exe" ---
+    m = _RE_ADD_APP.match(low)
+    if m:
+        app_name = m.group(1)
+        # берём путь из оригинального (с правильным регистром) сообщения
+        orig = _RE_ADD_APP.match(msg)
+        path = orig.group(2).strip().strip("'\"") if orig else m.group(2)
+        return _register_and_launch(app_name, path)
+
+    # --- Удалить пользовательское приложение: "удали приложение rust" ---
+    m = _RE_DEL_APP.match(low)
+    if m:
+        return _unregister_app(m.group(1))
+
+    # --- Список своих приложений: "мои приложения" ---
+    if _any(low, ["мои приложения", "добавленные приложения", "my apps", "список приложений"]):
+        return _list_custom_apps()
 
     # --- Возможности / помощь ---
     if _any(low, [
@@ -136,17 +178,26 @@ def handle_local(message: str) -> str | None:
             url = _extract_url(rest_orig) or rest_orig
             return _open_url(url)
 
-        # Известное приложение?
+        # Известное встроенное приложение?
         app_cmd = _match_app(rest_low)
         if app_cmd:
             return _launch_app(app_cmd, rest_low)
+
+        # Пользовательское приложение из базы?
+        custom_path = _get_custom_app(rest_low)
+        if custom_path:
+            return _launch_app(custom_path, rest_low)
 
         # Выглядит как путь к файлу?
         if _looks_like_path(rest_orig):
             return _open_file(rest_orig)
 
-        # Не распознали — пусть LLM разберётся
-        return None
+        # Приложение не найдено — спрашиваем путь
+        _pending_app = rest_low
+        return (
+            f"Не нашёл приложение «{rest_low}», сэр.\n"
+            f"Укажи путь к exe-файлу — запомню и открою."
+        )
 
     # --- Создать ---
     if _RE_CREATE.match(low):
@@ -377,6 +428,94 @@ def _capabilities() -> str:
         "  /exit     — выключить Джарвис\n"
         "  🎤        — голосовой ввод (кнопка в интерфейсе)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Пользовательские приложения (SQLite)
+# ---------------------------------------------------------------------------
+
+def _db_conn():
+    import sqlite3
+    import config
+    conn = sqlite3.connect(config.DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS custom_apps (
+            name     TEXT PRIMARY KEY,
+            path     TEXT NOT NULL,
+            added_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.commit()
+    return conn
+
+
+def _get_custom_app(name: str) -> str | None:
+    """Ищет приложение по имени (нечёткое совпадение)."""
+    try:
+        name_low = name.lower().strip()
+        with _db_conn() as conn:
+            rows = conn.execute("SELECT name, path FROM custom_apps").fetchall()
+        for row_name, path in rows:
+            if row_name == name_low or row_name in name_low or name_low in row_name:
+                return path
+    except Exception:
+        pass
+    return None
+
+
+def _save_custom_app(name: str, path: str) -> None:
+    try:
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO custom_apps (name, path) VALUES (?, ?)",
+                (name.lower().strip(), path),
+            )
+    except Exception as e:
+        print(f"[AppStore] save error: {e}")
+
+
+def _unregister_app(name: str) -> str:
+    try:
+        with _db_conn() as conn:
+            n = conn.execute(
+                "DELETE FROM custom_apps WHERE name = ?", (name.lower().strip(),)
+            ).rowcount
+        return (
+            f"Приложение «{name}» удалено из базы, сэр."
+            if n else
+            f"Приложение «{name}» не найдено в базе, сэр."
+        )
+    except Exception as e:
+        return f"Ошибка: {e}"
+
+
+def _list_custom_apps() -> str:
+    try:
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT name, path FROM custom_apps ORDER BY name"
+            ).fetchall()
+        if not rows:
+            return "Добавленных приложений пока нет, сэр."
+        lines = ["Мои приложения, сэр:\n"]
+        for name, path in rows:
+            lines.append(f"  {name}  →  {path}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Ошибка: {e}"
+
+
+def _register_and_launch(name: str, path: str) -> str:
+    """Сохраняет путь к приложению в базу и запускает его."""
+    p = Path(path.strip("'\""))
+    if not p.exists():
+        return (
+            f"Файл не найден: {p}, сэр.\n"
+            f"Проверь путь и попробуй снова: добавь приложение {name} <правильный путь>"
+        )
+    _save_custom_app(name, str(p))
+    result = _launch_app(f'"{p}"', name)
+    return f"Запомнил «{name}», сэр. {result}"
 
 
 # ---------------------------------------------------------------------------
