@@ -127,6 +127,7 @@ def _handle_connection_error(error: ConnectionError, user_input: str) -> None:
 
 def main():
     voice_mode = "--voice" in sys.argv
+    gui_mode = "--gui" in sys.argv
 
     init_db()
 
@@ -145,6 +146,12 @@ def main():
         memory=memory,
         on_tool_use=cli.print_tool_usage,
     )
+
+    # GUI-режим — открываем окно и выходим
+    if gui_mode:
+        from ui.app import run_gui
+        run_gui(assistant)
+        return
 
     cli.print_welcome()
     mode_label = "ГОЛОС" if voice_mode else "ТЕКСТ"

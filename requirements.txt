@@ -11,6 +11,7 @@ sentence-transformers>=3.0.0
 
 # Интерфейс
 rich>=13.0.0
+customtkinter>=5.2.0
 
 # Конфиг
 python-dotenv>=1.0.0
