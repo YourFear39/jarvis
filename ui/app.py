@@ -317,6 +317,42 @@ class JarvisApp(ctk.CTk):
             if not self._busy:
                 self._status_lbl.configure(text="● ONLINE", text_color=C["green"])
 
+    # ------------------------------------------------------------------ connection errors
+
+    def _handle_conn_error(self, err: str, user_text: str):
+        """Обрабатывает ошибку подключения к LLM — сначала пробует офлайн-режим."""
+        from core.offline import handle_offline, offline_help
+
+        # Пробуем ответить без LLM
+        offline_response = handle_offline(user_text)
+        if offline_response:
+            self._append_message("jarvis", offline_response)
+            self._append_system("ОТВЕТ БЕЗ LLM (ОФЛАЙН-РЕЖИМ)")
+            self._set_busy(False)
+            if self._voice_mode:
+                self._enqueue_tts(offline_response)
+            return
+
+        # Офлайн не справился — показываем понятную причину
+        if "GEMINI_QUOTA_EXHAUSTED" in err:
+            n = err.split(":")[-1]
+            self._append_system(
+                f"ВСЕ {n} КЛЮЧА GEMINI ИСЧЕРПАЛИ ДНЕВНОЙ ЛИМИТ  ·  "
+                f"ЛИМИТ ОБНОВИТСЯ В ~03:00 МСК"
+            )
+        elif "GEMINI_UNAVAILABLE" in err:
+            self._append_system("СЕРВЕРЫ GEMINI ПЕРЕГРУЖЕНЫ — ПОПРОБУЙ ЧЕРЕЗ МИНУТУ")
+        else:
+            self._append_system(f"НЕТ СВЯЗИ С LLM: {err}")
+
+        # Показываем что доступно в офлайн
+        help_text = offline_help()
+        self._append_message("jarvis", help_text)
+        if self._voice_mode:
+            self._enqueue_tts("Нет связи с сервером, сэр. Работаю в офлайн-режиме.")
+
+        self._set_busy(False)
+
     # ------------------------------------------------------------------ send / worker
 
     def _on_send(self, event=None, from_voice=False):
@@ -362,7 +398,7 @@ class JarvisApp(ctk.CTk):
             response = self._assistant.chat(text)
             self._q.put(("response", response))
         except ConnectionError as e:
-            self._q.put(("error", str(e)))
+            self._q.put(("conn_error", str(e), text))
         except Exception as e:
             self._q.put(("error", f"{type(e).__name__}: {e}"))
 
@@ -386,6 +422,9 @@ class JarvisApp(ctk.CTk):
                 elif kind == "error":
                     self._append_system(f"ОШИБКА: {item[1]}")
                     self._set_busy(False)
+
+                elif kind == "conn_error":
+                    self._handle_conn_error(item[1], item[2])
 
                 elif kind == "tool":
                     self._append_tool(item[1])
