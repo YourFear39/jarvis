@@ -68,12 +68,20 @@ class JarvisAssistant:
         Основной метод: принимает сообщение и возвращает ответ Джарвиса.
 
         Цикл:
+        0. Пробуем выполнить локально (открыть приложение, файл, создать/удалить и т.д.)
         1. Подгружаем релевантные воспоминания
         2. Отправляем в LLM
         3. Если LLM хочет инструмент — вызываем его и отправляем результат обратно
         4. Если второй вызов LLM упал — показываем сырые результаты инструмента
         5. Получаем финальный ответ, сохраняем в память
         """
+        # Шаг 0: локальный обработчик (без LLM, без квоты)
+        from core.local_handler import handle_local
+        local_response = handle_local(user_message)
+        if local_response is not None:
+            self._save_to_history(user_message, local_response)
+            return local_response
+
         memories = self._memory.get_relevant_memories(user_message)
         system_prompt = get_system_prompt(memories if memories else None)
 
