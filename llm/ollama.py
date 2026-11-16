@@ -6,6 +6,7 @@
 
 import json
 import requests
+import requests.exceptions
 
 import config
 from llm.base import BaseLLMProvider, LLMResponse, Message, ToolCall
@@ -66,12 +67,19 @@ class OllamaProvider(BaseLLMProvider):
         if self._tools_json:
             payload["tools"] = self._tools_json
 
-        response = requests.post(
-            f"{self._base_url}/api/chat",
-            json=payload,
-            timeout=120,
-        )
-        response.raise_for_status()
+        try:
+            response = requests.post(
+                f"{self._base_url}/api/chat",
+                json=payload,
+                timeout=120,
+            )
+            response.raise_for_status()
+        except requests.exceptions.ConnectionError as e:
+            raise ConnectionError(f"Ollama недоступна по {self._base_url}") from e
+        except requests.exceptions.Timeout as e:
+            raise ConnectionError("Ollama не ответила за 120с") from e
+        except requests.exceptions.RequestException as e:
+            raise ConnectionError(f"Ошибка Ollama: {e}") from e
         data = response.json()
 
         return self._parse_response(data)
@@ -111,12 +119,19 @@ class OllamaProvider(BaseLLMProvider):
             "stream": False,
         }
 
-        response = requests.post(
-            f"{self._base_url}/api/chat",
-            json=payload,
-            timeout=120,
-        )
-        response.raise_for_status()
+        try:
+            response = requests.post(
+                f"{self._base_url}/api/chat",
+                json=payload,
+                timeout=120,
+            )
+            response.raise_for_status()
+        except requests.exceptions.ConnectionError as e:
+            raise ConnectionError(f"Ollama недоступна по {self._base_url}") from e
+        except requests.exceptions.Timeout as e:
+            raise ConnectionError("Ollama не ответила за 120с") from e
+        except requests.exceptions.RequestException as e:
+            raise ConnectionError(f"Ошибка Ollama: {e}") from e
         data = response.json()
 
         return self._parse_response(data)

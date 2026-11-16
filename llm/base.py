@@ -21,6 +21,7 @@ class ToolCall:
     """Запрос LLM на вызов инструмента."""
     name: str                          # Имя инструмента
     arguments: dict[str, Any]          # Аргументы
+    id: str | None = None              # ID вызова (нужен для Claude tool_result)
 
 
 @dataclass
@@ -74,14 +75,16 @@ class BaseLLMProvider(ABC):
         system_prompt: str,
         history: list[Message],
         user_message: str,
-        tool_call: ToolCall,
-        tool_result: str,
+        tool_calls: list[ToolCall],
+        tool_results: list[str],
+        previous_rounds: list[tuple[list[ToolCall], list[str]]] | None = None,
     ) -> LLMResponse:
         """
-        Отправляет результат выполнения инструмента и получает финальный ответ.
+        Отправляет результаты выполненных инструментов и получает следующий ответ LLM.
 
-        :param tool_call: вызов инструмента, который был сделан
-        :param tool_result: результат выполнения инструмента (строка)
+        :param tool_calls:      вызовы инструментов текущего раунда
+        :param tool_results:    результаты (1:1 с tool_calls)
+        :param previous_rounds: предыдущие раунды [(calls, results), ...] для многораундового диалога
         """
         pass
 

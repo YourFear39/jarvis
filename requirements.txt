@@ -1,6 +1,7 @@
 # LLM провайдеры
 google-genai>=1.0.0
 anthropic>=0.40.0
+openai>=1.0.0             # Cerebras (OpenAI-совместимый API)
 
 # Веб-поиск (бесплатно, без API-ключа)
 ddgs>=1.0.0
@@ -20,6 +21,9 @@ python-dotenv>=1.0.0
 PyPDF2>=3.0.0
 python-docx>=1.0.0
 
+# Системный мониторинг (CPU/RAM, процессы для игрового режима)
+psutil>=5.9.0
+
 # Ollama (опционально, для локальных моделей)
 requests>=2.31.0
 
@@ -28,4 +32,7 @@ faster-whisper>=1.0.0     # Локальное распознавание реч
 edge-tts>=6.0.0           # TTS через Microsoft нейросети (бесплатно)
 sounddevice>=0.4.0        # Захват звука с микрофона
 soundfile>=0.12.0         # Чтение/запись аудиофайлов
-playsound==1.2.2          # Воспроизведение MP3 на Windows
+av>=12.0.0                # PyAV — декодирование MP3 для JARVIS DSP пайплайна
+scipy>=1.10.0             # DSP: фильтры, свёртка, JARVIS-эффект
+numpy>=1.24.0             # Обработка аудио-массивов
+playsound==1.2.2          # Fallback воспроизведение MP3 (без DSP)

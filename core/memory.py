@@ -58,15 +58,15 @@ class JarvisMemory:
             return
 
         try:
-            # Сохраняем оба сообщения как отдельные записи
             timestamp = datetime.now().isoformat()
 
-            # ID на основе хэша чтобы избежать дублей
-            uid = hashlib.md5(f"{user_message}{timestamp}".encode()).hexdigest()
+            # ID только по содержимому сообщения — upsert предотвращает дубли
+            uid = hashlib.md5(user_message.encode()).hexdigest()
 
             combined = f"Пользователь: {user_message}\nДжарвис: {assistant_response}"
 
-            self._collection.add(
+            # upsert: если такой вопрос уже был — обновляем ответ, не дублируем
+            self._collection.upsert(
                 documents=[combined],
                 metadatas=[{
                     "user_msg": user_message[:500],

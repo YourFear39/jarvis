@@ -4,11 +4,16 @@
 Активируется автоматически когда API недоступен.
 """
 
+import re
 from datetime import datetime
 
-from tools.notes import add_note, get_notes, add_task, get_tasks, complete_task
+from tools.notes import add_note, get_notes, add_task, get_tasks, complete_task, delete_note, delete_task
 from tools.planning import get_plan, create_plan
 from tools.search import web_search
+from core.logger import get_logger
+
+log = get_logger("offline")
+_RE_ID_PREFIX = re.compile(r'^(?:номер|number|id|#|№|с\s+названием|под\s+названием)\s*', re.I)
 
 
 def handle_offline(user_message: str) -> str | None:
@@ -17,6 +22,7 @@ def handle_offline(user_message: str) -> str | None:
     Возвращает ответ если смог обработать, None если не знает что делать.
     """
     msg = user_message.lower().strip()
+    log.debug("offline INPUT: %r", user_message[:80])
 
     # --- Время и дата ---
     if _matches(msg, ["время", "который час", "сколько времени", "what time"]):
@@ -32,13 +38,21 @@ def handle_offline(user_message: str) -> str | None:
         return get_notes()
 
     if _matches(msg, ["добавь заметку", "запиши", "сохрани заметку", "add note"]):
-        # Пробуем вытащить текст после команды
         for kw in ["добавь заметку", "запиши", "сохрани заметку"]:
             if kw in msg:
                 content = user_message[user_message.lower().index(kw) + len(kw):].strip(" :—-")
                 if content:
                     return add_note(title=content[:50], content=content)
         return "Что именно записать? Например: 'запиши купить молоко'"
+
+    if _matches(msg, ["удали заметку", "удалить заметку", "delete note", "убери заметку"]):
+        for kw in ["удали заметку", "удалить заметку", "delete note", "убери заметку"]:
+            if kw in msg:
+                arg = user_message[user_message.lower().index(kw) + len(kw):].strip(" :—-.,!?;:")
+                arg = _RE_ID_PREFIX.sub("", arg).strip().strip(".,!?;: ")
+                if arg:
+                    return delete_note(arg)
+        return "Укажи номер или название заметки. Например: 'удали заметку 3' или 'удали заметку список покупок'."
 
     # --- Задачи ---
     if _matches(msg, ["покажи задачи", "мои задачи", "список задач", "show tasks", "todo"]):
@@ -52,6 +66,24 @@ def handle_offline(user_message: str) -> str | None:
                     return add_task(title=title)
         return "Что добавить в задачи? Например: 'добавь задачу позвонить маме'"
 
+    if _matches(msg, ["удали задачу", "delete task"]):
+        for kw in ["удали задачу", "delete task"]:
+            if kw in msg:
+                arg = user_message[user_message.lower().index(kw) + len(kw):].strip(" :—-")
+                arg = _RE_ID_PREFIX.sub("", arg).strip()
+                if arg:
+                    return delete_task(arg)
+        return "Укажи номер задачи. Например: 'удали задачу 2'."
+
+    if _matches(msg, ["выполни задачу", "сделал задачу", "задача выполнена", "отметь задачу", "complete task"]):
+        for kw in ["выполни задачу", "сделал задачу", "задача выполнена", "отметь задачу", "complete task"]:
+            if kw in msg:
+                arg = user_message[user_message.lower().index(kw) + len(kw):].strip(" :—-")
+                arg = _RE_ID_PREFIX.sub("", arg).strip()
+                if arg:
+                    return complete_task(arg)
+        return "Укажи номер задачи. Например: 'выполни задачу 1'."
+
     # --- Планы ---
     if _matches(msg, ["покажи план", "мои планы", "планы", "show plan"]):
         return get_plan()
@@ -61,6 +93,7 @@ def handle_offline(user_message: str) -> str | None:
         results = web_search(user_message)
         return f"[Офлайн-поиск — LLM недоступен, показываю сырые результаты]\n\n{results}"
 
+    log.debug("offline NO MATCH → None: %r", user_message[:80])
     return None  # Не смогли обработать офлайн
 
 
@@ -71,8 +104,8 @@ def offline_help() -> str:
         f"API ИИ сейчас недоступен (лимит исчерпан или сервер перегружен).\n\n"
         f"Без API я могу:\n"
         f"  • Время/дата — 'который час', 'какой сегодня день'\n"
-        f"  • Заметки    — 'покажи заметки', 'запиши ...'\n"
-        f"  • Задачи     — 'покажи задачи', 'добавь задачу ...'\n"
+        f"  • Заметки    — 'покажи заметки', 'запиши ...', 'удали заметку 3'\n"
+        f"  • Задачи     — 'покажи задачи', 'добавь задачу ...', 'выполни задачу 1', 'удали задачу 2'\n"
         f"  • Планы      — 'покажи планы'\n"
         f"  • Поиск      — 'найди ...', 'погода в ...'\n\n"
         f"Лимит Gemini обновляется в ~03:00 МСК. "

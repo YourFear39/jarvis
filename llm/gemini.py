@@ -112,30 +112,49 @@ class GeminiProvider(BaseLLMProvider):
         system_prompt: str,
         history: list[Message],
         user_message: str,
-        tool_call: ToolCall,
-        tool_result: str,
+        tool_calls: list[ToolCall],
+        tool_results: list[str],
+        previous_rounds: list[tuple[list[ToolCall], list[str]]] | None = None,
     ) -> LLMResponse:
-        """Отправляет результат инструмента и получает финальный ответ."""
+        """Отправляет результаты всех инструментов и получает финальный ответ."""
         contents = self._build_contents(history, user_message)
 
+        # Предыдущие раунды (multi-round tool calling)
+        if previous_rounds:
+            for prev_calls, prev_results in previous_rounds:
+                contents.append(types.Content(
+                    role="model",
+                    parts=[
+                        types.Part(function_call=types.FunctionCall(name=tc.name, args=tc.arguments))
+                        for tc in prev_calls
+                    ],
+                ))
+                contents.append(types.Content(
+                    role="user",
+                    parts=[
+                        types.Part(function_response=types.FunctionResponse(
+                            name=tc.name, response={"result": result}))
+                        for tc, result in zip(prev_calls, prev_results)
+                    ],
+                ))
+
+        # Текущий раунд: один ход модели со всеми function_call
         contents.append(types.Content(
             role="model",
-            parts=[types.Part(
-                function_call=types.FunctionCall(
-                    name=tool_call.name,
-                    args=tool_call.arguments,
-                )
-            )],
+            parts=[
+                types.Part(function_call=types.FunctionCall(name=tc.name, args=tc.arguments))
+                for tc in tool_calls
+            ],
         ))
 
+        # Один ход пользователя со всеми function_response
         contents.append(types.Content(
             role="user",
-            parts=[types.Part(
-                function_response=types.FunctionResponse(
-                    name=tool_call.name,
-                    response={"result": tool_result},
-                )
-            )],
+            parts=[
+                types.Part(function_response=types.FunctionResponse(
+                    name=tc.name, response={"result": result}))
+                for tc, result in zip(tool_calls, tool_results)
+            ],
         ))
 
         response = self._generate(system_prompt, contents)
@@ -154,6 +173,9 @@ class GeminiProvider(BaseLLMProvider):
 
         # Внешний цикл: перебор ключей
         while True:
+            key_switched = False
+            last_exc: Exception | None = None
+
             # Внутренний цикл: retry при временных ошибках (503, краткий 429)
             for attempt in range(3):
                 try:
@@ -163,6 +185,7 @@ class GeminiProvider(BaseLLMProvider):
                         config=cfg,
                     )
                 except Exception as e:
+                    last_exc = e
                     err = str(e)
                     is_quota = "429" in err or "resource_exhausted" in err.lower()
                     is_unavailable = "503" in err or "unavailable" in err.lower()
@@ -181,7 +204,8 @@ class GeminiProvider(BaseLLMProvider):
                         match = re.search(r'retry[^\d]*(\d+)', err, re.IGNORECASE)
                         wait = int(match.group(1)) + 2 if match else 0
 
-                        if has_retry_delay and wait <= 120 and attempt == 0:
+                        # Per-minute rate limit — ждём на ЛЮБОЙ попытке, не только на первой
+                        if has_retry_delay and wait <= 120:
                             print(f"\n  [Gemini] rate limit, waiting {wait}s...")
                             time.sleep(wait)
                             continue
@@ -192,7 +216,8 @@ class GeminiProvider(BaseLLMProvider):
                                 system_instruction=system_prompt,
                                 tools=self._gemini_tools if self._gemini_tools else None,
                             )
-                            break  # Выходим из внутреннего цикла → внешний попробует новый ключ
+                            key_switched = True
+                            break  # выходим из for, внешний while продолжит с новым ключом
 
                         # Все ключи исчерпаны
                         raise ConnectionError(
@@ -200,8 +225,10 @@ class GeminiProvider(BaseLLMProvider):
                         ) from e
 
                     raise  # Любая другая ошибка — пробрасываем
-            else:
-                continue  # Внутренний цикл завершился нормально → выходим из while
+
+            if not key_switched:
+                # Три попытки исчерпаны без смены ключа — серверы недоступны
+                raise ConnectionError("GEMINI_UNAVAILABLE") from last_exc
 
     def _build_contents(self, history: list[Message], user_message: str) -> list:
         """Конвертирует историю и новое сообщение в формат Gemini."""

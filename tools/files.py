@@ -6,6 +6,7 @@
 from pathlib import Path
 
 import config
+from core.safety import SafetyLevel, classify_file_read
 
 
 def read_file(path: str) -> str:
@@ -16,6 +17,11 @@ def read_file(path: str) -> str:
     :return: содержимое файла или сообщение об ошибке
     """
     file_path = Path(path).expanduser().resolve()
+
+    # Защита от чтения критичных системных файлов
+    level, reason = classify_file_read(str(file_path))
+    if level == SafetyLevel.FORBIDDEN:
+        return f"Отказано: {reason}, сэр."
 
     if not file_path.exists():
         return f"Файл не найден: {path}"

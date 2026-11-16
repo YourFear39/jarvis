@@ -28,3 +28,6 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Вывод тестов
+_test_search_out.txt

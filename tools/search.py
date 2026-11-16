@@ -22,23 +22,33 @@ def web_search(query: str) -> str:
     if not DDGS_AVAILABLE:
         return "Ошибка: библиотека ddgs не установлена. Запусти: pip install ddgs"
 
-    try:
-        results = list(DDGS().text(
-            query,
-            max_results=config.SEARCH_MAX_RESULTS,
-        ))
+    import time as _time
+
+    last_exc: str = ""
+    for attempt in range(3):
+        if attempt:
+            _time.sleep(2 * attempt)   # 2s, 4s перед повторными попытками
+        try:
+            results = list(DDGS().text(
+                query,
+                max_results=config.SEARCH_MAX_RESULTS,
+            ))
+        except Exception as e:
+            last_exc = str(e)
+            continue
 
         if not results:
-            return f"По запросу '{query}' ничего не найдено в интернете."
+            last_exc = "No results"
+            continue
 
-        # Форматируем результаты в читаемый текст для LLM
-        lines = [f"Результаты поиска по запросу: {query}\n"]
-        for i, r in enumerate(results, 1):
-            lines.append(f"{i}. {r.get('title', 'Без названия')}")
-            lines.append(f"   {r.get('href', '')}")
-            lines.append(f"   {r.get('body', '')}\n")
+        # Форматируем для LLM: только данные, без URL и встроенных инструкций
+        lines = [f"[Результаты поиска по запросу: «{query}»]"]
+        for r in results:
+            title = r.get("title", "").strip()
+            body  = r.get("body",  "").strip()
+            if body:
+                lines.append(f"• {title}: {body}")
 
         return "\n".join(lines)
 
-    except Exception as e:
-        return f"Ошибка при поиске: {str(e)}. Возможно, нет подключения к интернету."
+    return f"Ошибка при поиске: {last_exc}. Возможно, нет подключения к интернету."

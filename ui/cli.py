@@ -50,6 +50,20 @@ def print_jarvis_response(text: str):
     console.print()
 
 
+def print_confirm(description: str, details: str = "") -> None:
+    """Выводит запрос подтверждения опасной операции."""
+    lines = [f"[bold yellow]⚠ Запрос подтверждения[/bold yellow]\n{description}"]
+    if details:
+        lines.append(f"[dim]{details}[/dim]")
+    console.print(Panel(
+        "\n".join(lines),
+        border_style="yellow",
+        title="[bold yellow]Требуется подтверждение[/bold yellow]",
+        title_align="left",
+        padding=(0, 1),
+    ))
+
+
 def print_tool_usage(tool_name: str):
     """Показывает что Джарвис использует инструмент (пока думает)."""
     tool_labels = {
@@ -62,7 +76,18 @@ def print_tool_usage(tool_name: str):
         "read_file": "чтение файла",
         "create_plan": "создание плана",
         "get_plan": "чтение плана",
-        "update_plan_step": "обновление плана",
+        "update_plan_step":      "обновление плана",
+        "run_powershell":        "выполнение команды",
+        "create_file_with_content": "создание файла",
+        "list_directory":        "просмотр папки",
+        "registry_read":         "чтение реестра",
+        "registry_list":         "просмотр реестра",
+        "registry_write":        "запись в реестр",
+        "registry_delete_value": "удаление из реестра",
+        "open_app":              "запуск приложения",
+        "open_url":              "открытие ссылки",
+        "delete_note":           "удаление заметки",
+        "delete_task":           "удаление задачи",
     }
     label = tool_labels.get(tool_name, tool_name)
     console.print(f"[dim cyan]  ⚙ {label}...[/dim cyan]")
